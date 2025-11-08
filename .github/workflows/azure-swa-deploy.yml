@@ -49,4 +49,6 @@ jobs:
           skip_api_build: true
           production_branch: "main"
           deployment_environment: "development"
+        env:
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
 
