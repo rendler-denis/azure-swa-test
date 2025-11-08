@@ -1,0 +1,87 @@
+# Example GitHub Actions workflow for deploying AstroJS to Azure Static Web Apps
+# with environment-specific Entra ID configuration
+#
+# Save this as .github/workflows/azure-swa-deploy.yml in your repository
+
+name: Deploy to Azure Static Web Apps
+
+on:
+  push:
+    branches:
+      - "**"
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+    branches:
+      - main
+      - develop
+
+jobs:
+  build_and_deploy:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    name: Build and Deploy
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Copy environment-specific SWA config
+        run: |
+          # Determine which config to use based on branch
+          if ${{ github.ref_name != github.event.repository.default_branch }}; then
+            echo "Deploying to DEVELOPMENT environment"
+            cp staticwebapp.config.develop.json staticwebapp.config.json
+          else
+            echo "Deploying to PRODUCTION environment"
+            cp staticwebapp.config.prod.json staticwebapp.config.json
+          fi
+          # Replace tenant ID placeholder with actual tenant ID
+          sed -i 's/{AZURE_TENANT_ID}/${{ secrets.AZURE_TENANT_ID }}/g' staticwebapp.config.json
+          echo "SWA Config:"
+          cat staticwebapp.config.json
+
+      - name: Deploy to Azure Static Web Apps
+        uses: Azure/static-web-apps-deploy@v1
+        with:
+          azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          action: "upload"
+          # AstroJS specific settings
+          app_location: "/"
+          output_location: "dist"
+          # Skip API build if not using Azure Functions
+          skip_api_build: true
+          production_branch: "main"
+        #   deployment_environment: "development"
+
+      - name: Set environment variable for preview environments
+        if: github.ref_name != github.event.repository.default_branch
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Get environment name and set app settings
+        if: github.ref_name != github.event.repository.default_branch
+        run: |
+          # Wait a bit for the environment to be fully created
+          sleep 10
+
+          # For PRs, the environment name will be the PR number
+          # For branches, it will be the branch name
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            ENV_NAME="${{ github.event.pull_request.number }}"
+          else
+            ENV_NAME="${{ github.ref_name }}"
+          fi
+
+          echo "Setting AZURE_CLIENT_ID for environment: $ENV_NAME"
+
+          # Set the environment variable
+          az staticwebapp appsettings set \
+            --name ${{ secrets.AZURE_STATIC_WEB_APP_NAME }} \
+            --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
+            --environment-name "$ENV_NAME" \
+            --setting-names AZURE_CLIENT_ID="${{ secrets.AZURE_CLIENT_ID }}"
+
+          echo "Environment variable set successfully"
