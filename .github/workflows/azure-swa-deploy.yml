@@ -9,6 +9,11 @@ on:
   push:
     branches:
       - "**"
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+    branches:
+      - main
+      - develop
 
 jobs:
   build_and_deploy:
@@ -48,7 +53,37 @@ jobs:
           # Skip API build if not using Azure Functions
           skip_api_build: true
           production_branch: "main"
-          deployment_environment: "development"
-        env:
-          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+        #   deployment_environment: "development"
+
+      - name: Set environment variable for preview environments
+        if: github.ref_name != github.event.repository.default_branch
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Get environment name and set app settings
+        if: github.ref_name != github.event.repository.default_branch
+        run: |
+          # Wait a bit for the environment to be fully created
+          sleep 10
+
+          # For PRs, the environment name will be the PR number
+          # For branches, it will be the branch name
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            ENV_NAME="${{ github.event.pull_request.number }}"
+          else
+            ENV_NAME="${{ github.ref_name }}"
+          fi
+
+          echo "Setting AZURE_CLIENT_ID for environment: $ENV_NAME"
+
+          # Set the environment variable
+          az staticwebapp appsettings set \
+            --name ${{ secrets.AZURE_STATIC_WEB_APP_NAME }} \
+            --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
+            --environment-name "$ENV_NAME" \
+            --setting-names AZURE_CLIENT_ID="${{ secrets.AZURE_CLIENT_ID }}"
+
+          echo "Environment variable set successfully"
+
 
